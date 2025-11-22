@@ -182,11 +182,11 @@ python train_nn_final.py
 
 | Model | Macro F1 | AUC-ROC | Accuracy |
 |-------|----------|---------|----------|
-| **Logistic Regression** | 0.720 | 0.812 | 0.720 |
-| **SVM** | 0.720 | 0.795 | 0.720 |
-| **XGBoost** | 0.658 | 0.807 | 0.680 |
+| **XGBoost** | **0.736** | **0.813** | **0.739** |
+| **Logistic Regression** | 0.720 | 0.812 | 0.722 |
+| **SVM** | 0.720 | 0.795 | 0.722 |
 
-### Cross-Validation Results (Logistic Regression - Best Model)
+### Cross-Validation Results (Logistic Regression)
 
 - **Mean Macro F1**: 0.674 ± 0.015
 - **Mean AUC-ROC**: 0.764 ± 0.018
@@ -205,7 +205,7 @@ The F1-maximizing neural network with attention mechanism achieved:
 
 1. **Biologically-informed feature engineering is effective**: Using only 8 carefully selected features based on neurobiological knowledge of AD achieved strong performance (AUC ~0.80-0.81).
 
-2. **Logistic Regression and SVM performed best**: Both achieved Macro F1 of 0.720 and strong AUC scores, demonstrating that simpler models can be highly effective with good feature engineering.
+2. **XGBoost achieved the best overall performance**: XGBoost achieved the highest Macro F1 (0.736) and AUC-ROC (0.813), demonstrating that ensemble methods can effectively capture non-linear relationships in neuroimaging data. Logistic Regression and SVM also performed well with Macro F1 of 0.720.
 
 3. **Hippocampus and entorhinal cortex ratios are predictive**: The engineered ratio features capturing relative atrophy in these regions showed strong discriminative power.
 
