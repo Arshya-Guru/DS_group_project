@@ -1,5 +1,0 @@
-True_Label,Predicted_Label,Count
-CDR=0,CDR=0,92
-CDR=0,CDR>0,53
-CDR>0,CDR=0,16
-CDR>0,CDR>0,73
