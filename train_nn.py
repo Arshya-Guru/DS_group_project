@@ -1,5 +1,6 @@
 """
 Neural Network Training Script for CDR Binary Classification
+Optimized for F1_macro with BCEWithLogitsLoss + pos_weight
 Run with: python train_nn.py
 """
 
@@ -58,7 +59,7 @@ else:
     print("✗ CUDA not available, using CPU")
 
 print("=" * 80)
-print("NEURAL NETWORK - Binary CDR Classification")
+print("NEURAL NETWORK - Binary CDR Classification (F1_macro optimization)")
 print("=" * 80)
 
 # Set random seeds for reproducibility
@@ -145,13 +146,13 @@ class BinaryClassifier(nn.Module):
 def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler, 
                 epochs=150, patience=20, device='cpu'):
     """
-    Train the model with early stopping
+    Train the model with early stopping based on F1_macro
     """
     model.to(device)
-    best_val_f1 = 0
+    best_val_f1_macro = 0
     best_model_state = copy.deepcopy(model.state_dict())
     patience_counter = 0
-    history = {'train_loss': [], 'val_loss': [], 'val_f1': [], 'val_auc': []}
+    history = {'train_loss': [], 'val_loss': [], 'val_f1_macro': [], 'val_auc': []}
     
     print(f"  Training on: {next(model.parameters()).device}")
     
@@ -214,23 +215,23 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         
         avg_val_loss = val_loss / val_batches if val_batches > 0 else 0
         
-        # Calculate metrics
-        val_f1 = f1_score(val_true, val_preds, pos_label=1, zero_division=0)
+        # Calculate metrics - USING F1_MACRO
+        val_f1_macro = f1_score(val_true, val_preds, average='macro', zero_division=0)
         val_auc = roc_auc_score(val_true, val_probs) if len(set(val_true)) > 1 else 0.5
         
         # Update history
         history['train_loss'].append(avg_train_loss)
         history['val_loss'].append(avg_val_loss)
-        history['val_f1'].append(val_f1)
+        history['val_f1_macro'].append(val_f1_macro)
         history['val_auc'].append(val_auc)
         
-        # Learning rate scheduling
+        # Learning rate scheduling - BASED ON F1_MACRO
         if scheduler is not None:
-            scheduler.step(val_f1)
+            scheduler.step(val_f1_macro)
         
-        # Early stopping
-        if val_f1 > best_val_f1:
-            best_val_f1 = val_f1
+        # Early stopping - BASED ON F1_MACRO
+        if val_f1_macro > best_val_f1_macro:
+            best_val_f1_macro = val_f1_macro
             best_model_state = copy.deepcopy(model.state_dict())
             patience_counter = 0
             best_epoch = epoch
@@ -240,7 +241,7 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
         # Print progress
         if (epoch + 1) % 20 == 0:
             print(f"    Epoch {epoch+1}/{epochs}: Train Loss: {avg_train_loss:.4f}, "
-                  f"Val Loss: {avg_val_loss:.4f}, Val F1: {val_f1:.4f}")
+                  f"Val Loss: {avg_val_loss:.4f}, Val F1_macro: {val_f1_macro:.4f}")
         
         if patience_counter >= patience:
             print(f"    Early stopping at epoch {epoch+1}")
@@ -248,9 +249,9 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, scheduler
     
     # Load best model
     model.load_state_dict(best_model_state)
-    print(f"    Best validation F1: {best_val_f1:.4f} at epoch {best_epoch+1}")
+    print(f"    Best validation F1_macro: {best_val_f1_macro:.4f} at epoch {best_epoch+1}")
     
-    return model, best_val_f1, history
+    return model, best_val_f1_macro, history
 
 def evaluate_model(model, data_loader, device='cpu'):
     """
@@ -319,7 +320,9 @@ outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 inner_cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
 
 outer_scores_acc = []
-outer_scores_f1 = []
+outer_scores_f1_macro = []
+outer_scores_f1_class0 = []
+outer_scores_f1_class1 = []
 outer_scores_auc = []
 best_params_list = []
 fold_predictions = []
@@ -329,6 +332,8 @@ print("STARTING NESTED CROSS-VALIDATION")
 print("=" * 80)
 print(f"Device: {device}")
 print(f"Outer folds: 5, Inner folds: 3")
+print(f"Optimization metric: F1_macro")
+print(f"Loss function: BCEWithLogitsLoss with pos_weight={pos_weight:.3f}")
 
 start_time = time.time()
 
@@ -354,7 +359,7 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
     X_val_scaled = scaler.transform(X_val_fold)
     
     # Inner CV: Hyperparameter search
-    best_inner_f1 = 0
+    best_inner_f1_macro = 0
     best_params = None
     
     print("\n  Inner CV: Hyperparameter search...")
@@ -366,7 +371,7 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
     sampled_combinations = random.sample(all_combinations, min(16, len(all_combinations)))
     
     for param_idx, params in enumerate(sampled_combinations, 1):
-        inner_f1_scores = []
+        inner_f1_macro_scores = []
         
         for inner_fold_idx, (inner_train_idx, inner_val_idx) in enumerate(inner_cv.split(X_train_scaled, y_train_fold)):
             clear_gpu_memory()
@@ -406,27 +411,27 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=8)
             
             # Train
-            model, val_f1, _ = train_model(
+            model, val_f1_macro, _ = train_model(
                 model, train_loader, val_loader, criterion, optimizer, scheduler,
                 epochs=80, patience=12, device=device
             )
             
-            inner_f1_scores.append(val_f1)
+            inner_f1_macro_scores.append(val_f1_macro)
             
             # Clean up
             del model, criterion, optimizer, scheduler
             clear_gpu_memory()
         
-        mean_inner_f1 = np.mean(inner_f1_scores)
+        mean_inner_f1_macro = np.mean(inner_f1_macro_scores)
         
-        if mean_inner_f1 > best_inner_f1:
-            best_inner_f1 = mean_inner_f1
-            best_params = params.copy()  # Make a copy to avoid reference issues
+        if mean_inner_f1_macro > best_inner_f1_macro:
+            best_inner_f1_macro = mean_inner_f1_macro
+            best_params = params.copy()
         
         if param_idx % 4 == 0:
             print(f"    Tested {param_idx}/{len(sampled_combinations)} param combinations")
     
-    print(f"\n  ✓ Best inner CV F1: {best_inner_f1:.4f}")
+    print(f"\n  ✓ Best inner CV F1_macro: {best_inner_f1_macro:.4f}")
     print(f"  ✓ Best params: {best_params}")
     best_params_list.append(best_params)
     
@@ -459,7 +464,7 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
                            weight_decay=best_params['weight_decay'])
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=10)
     
-    model, best_fold_f1, history = train_model(
+    model, best_fold_f1_macro, history = train_model(
         model, train_loader, val_loader, criterion, optimizer, scheduler,
         epochs=120, patience=15, device=device
     )
@@ -468,11 +473,14 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
     y_true, y_pred, y_prob = evaluate_model(model, val_loader, device)
     
     fold_acc = accuracy_score(y_true, y_pred)
-    fold_f1 = f1_score(y_true, y_pred, pos_label=1, zero_division=0)
+    fold_f1_macro = f1_score(y_true, y_pred, average='macro', zero_division=0)
+    fold_f1_per_class = f1_score(y_true, y_pred, average=None, zero_division=0)
     fold_auc = roc_auc_score(y_true, y_prob)
     
     outer_scores_acc.append(fold_acc)
-    outer_scores_f1.append(fold_f1)
+    outer_scores_f1_macro.append(fold_f1_macro)
+    outer_scores_f1_class0.append(fold_f1_per_class[0])
+    outer_scores_f1_class1.append(fold_f1_per_class[1])
     outer_scores_auc.append(fold_auc)
     
     fold_predictions.append({
@@ -480,13 +488,15 @@ for fold_idx, (train_idx, val_idx) in enumerate(outer_cv.split(X_train_full, y_t
         'y_pred': y_pred,
         'y_prob': y_prob,
         'best_params': best_params,
-        'best_f1': best_fold_f1
+        'best_f1_macro': best_fold_f1_macro
     })
     
     fold_time = time.time() - fold_start
     print(f"\n  ✓ Outer Fold {fold_idx} Results:")
     print(f"    Accuracy: {fold_acc:.4f}")
-    print(f"    F1 Score: {fold_f1:.4f}")
+    print(f"    F1_macro: {fold_f1_macro:.4f}")
+    print(f"    F1_class0 (CDR=0): {fold_f1_per_class[0]:.4f}")
+    print(f"    F1_class1 (CDR>0): {fold_f1_per_class[1]:.4f}")
     print(f"    AUC: {fold_auc:.4f}")
     print(f"    Time: {fold_time/60:.1f} minutes")
     
@@ -502,12 +512,16 @@ print("\n" + "=" * 80)
 print("NESTED CROSS-VALIDATION SUMMARY")
 print("=" * 80)
 
-print(f"F1 Scores: {[f'{score:.4f}' for score in outer_scores_f1]}")
+print(f"F1_macro Scores: {[f'{score:.4f}' for score in outer_scores_f1_macro]}")
+print(f"F1_class0 Scores: {[f'{score:.4f}' for score in outer_scores_f1_class0]}")
+print(f"F1_class1 Scores: {[f'{score:.4f}' for score in outer_scores_f1_class1]}")
 print(f"AUC Scores: {[f'{score:.4f}' for score in outer_scores_auc]}")
 print(f"Accuracy Scores: {[f'{score:.4f}' for score in outer_scores_acc]}")
 
 print(f"\nAverage Performance (± std):")
-print(f"  F1 Score: {np.mean(outer_scores_f1):.4f} ± {np.std(outer_scores_f1):.4f}")
+print(f"  F1_macro: {np.mean(outer_scores_f1_macro):.4f} ± {np.std(outer_scores_f1_macro):.4f}")
+print(f"  F1_class0 (CDR=0): {np.mean(outer_scores_f1_class0):.4f} ± {np.std(outer_scores_f1_class0):.4f}")
+print(f"  F1_class1 (CDR>0): {np.mean(outer_scores_f1_class1):.4f} ± {np.std(outer_scores_f1_class1):.4f}")
 print(f"  AUC: {np.mean(outer_scores_auc):.4f} ± {np.std(outer_scores_auc):.4f}")
 print(f"  Accuracy: {np.mean(outer_scores_acc):.4f} ± {np.std(outer_scores_acc):.4f}")
 
@@ -563,7 +577,7 @@ optimizer_final = optim.Adam(final_model.parameters(), lr=final_params['learning
 scheduler_final = optim.lr_scheduler.ReduceLROnPlateau(optimizer_final, mode='max', factor=0.5, patience=10)
 
 print("\nTraining final model...")
-final_model, final_best_f1, final_history = train_model(
+final_model, final_best_f1_macro, final_history = train_model(
     final_model, train_loader_final, test_loader_final, criterion_final,
     optimizer_final, scheduler_final, epochs=150, patience=20, device=device
 )
@@ -573,17 +587,23 @@ print("\nEvaluating on test set...")
 y_test_true, y_test_pred, y_test_prob = evaluate_model(final_model, test_loader_final, device)
 
 test_acc = accuracy_score(y_test_true, y_test_pred)
-test_f1 = f1_score(y_test_true, y_test_pred, pos_label=1, zero_division=0)
+test_f1_macro = f1_score(y_test_true, y_test_pred, average='macro', zero_division=0)
+test_f1_per_class = f1_score(y_test_true, y_test_pred, average=None, zero_division=0)
 test_auc = roc_auc_score(y_test_true, y_test_prob)
 
 print(f"\n" + "=" * 80)
 print("FINAL TEST SET PERFORMANCE")
 print("=" * 80)
 print(f"  Accuracy: {test_acc:.4f}")
-print(f"  F1 Score: {test_f1:.4f}")
+print(f"  F1_macro: {test_f1_macro:.4f}")
+print(f"  F1_class0 (CDR=0): {test_f1_per_class[0]:.4f}")
+print(f"  F1_class1 (CDR>0): {test_f1_per_class[1]:.4f}")
 print(f"  AUC: {test_auc:.4f}")
-print(f"  Confusion Matrix:")
-print(f"    {confusion_matrix(y_test_true, y_test_pred)}")
+print(f"\n  Confusion Matrix:")
+cm = confusion_matrix(y_test_true, y_test_pred)
+print(f"    {cm}")
+print(f"    [[TN={cm[0,0]}, FP={cm[0,1]}],")
+print(f"     [FN={cm[1,0]}, TP={cm[1,1]}]]")
 
 total_time = time.time() - start_time
 print(f"\nTotal runtime: {total_time/60:.1f} minutes")
@@ -597,8 +617,12 @@ print("SAVING RESULTS")
 print("=" * 80)
 
 results = {
+    'optimization_metric': 'F1_macro',
+    'loss_function': f'BCEWithLogitsLoss(pos_weight={pos_weight:.3f})',
     'nested_cv': {
-        'f1_scores': outer_scores_f1,
+        'f1_macro_scores': outer_scores_f1_macro,
+        'f1_class0_scores': outer_scores_f1_class0,
+        'f1_class1_scores': outer_scores_f1_class1,
         'auc_scores': outer_scores_auc,
         'acc_scores': outer_scores_acc,
         'best_params_list': best_params_list,
@@ -609,7 +633,9 @@ results = {
         'y_pred': y_test_pred,
         'y_prob': y_test_prob,
         'accuracy': test_acc,
-        'f1': test_f1,
+        'f1_macro': test_f1_macro,
+        'f1_class0': test_f1_per_class[0],
+        'f1_class1': test_f1_per_class[1],
         'auc': test_auc,
         'confusion_matrix': confusion_matrix(y_test_true, y_test_pred).tolist(),
         'classification_report': classification_report(y_test_true, y_test_pred, 
@@ -626,7 +652,7 @@ results = {
 }
 
 # Save results
-with open('nn_results.pkl', 'wb') as f:
+with open('nn_results_f1macro.pkl', 'wb') as f:
     pickle.dump(results, f)
 
 # Save model and scaler
@@ -635,10 +661,10 @@ torch.save({
     'scaler': scaler_final,
     'feature_names': feature_names,
     'final_params': final_params
-}, 'final_nn_model.pth')
+}, 'final_nn_model_f1macro.pth')
 
-print("✓ Results saved to: nn_results.pkl")
-print("✓ Model saved to: final_nn_model.pth")
+print("✓ Results saved to: nn_results_f1macro.pkl")
+print("✓ Model saved to: final_nn_model_f1macro.pth")
 print(f"✓ Device used: {device}")
 print(f"✓ CUDA available: {torch.cuda.is_available()}")
 
@@ -646,4 +672,4 @@ if torch.cuda.is_available():
     print_gpu_memory()
 
 print("\n🎯 Training completed successfully!")
-print("Download 'nn_results.pkl' and 'final_nn_model.pth' for analysis in your notebook.")
+print("Download 'nn_results_f1macro.pkl' and 'final_nn_model_f1macro.pth' for analysis in your notebook.")
