@@ -35,6 +35,7 @@ The project uses MRI derivatives from obtained by running Freesurfer's (7.4.1) S
 - **NumPy** - Numerical computing
 - **scikit-learn** - Machine learning utilities and preprocessing
 - **Pandas** - Data manipulation (implied)
+- **PyTorch** - GPU acceleration library
 
 ## Features
 
